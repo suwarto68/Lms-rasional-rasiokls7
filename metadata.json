@@ -1,0 +1,6 @@
+{
+  "name": "LMS & CBT ANBK Matematika Kelas 7 - SMPN 1 Wanaraya",
+  "description": "Aplikasi Pembelajaran Jarak Jauh (LMS) dan Ujian Online CBT ANBK Matematika Kelas 7 Fase D SMP Negeri 1 Wanaraya Tahun Ajaran 2026/2027 terintegrasi Google Spreadsheet.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
