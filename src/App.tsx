@@ -11,6 +11,16 @@ import {
   ConnectionStatus,
   KelasOption,
 } from './types/cbtTypes';
+import {
+  getLocalSettings,
+  getLocalUsers,
+  getLocalResults,
+  saveAppSettingsHybrid,
+  checkConnectionAndSyncData,
+  pullUsersFromSpreadsheetHybrid,
+  addStudentToSheetHybrid,
+  submitExamResultHybrid,
+} from './services/cbtDataService';
 import { SchoolLogo } from './components/SchoolLogo';
 import { TujuanPembelajaranView } from './components/TujuanPembelajaranView';
 import { MateriView } from './components/MateriView';
@@ -39,19 +49,10 @@ type ActiveTab = 'home' | 'tujuan' | 'materi' | 'kuis' | 'admin';
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
 
-  // State Database & Koneksi Google Spreadsheet
-  const [users, setUsers] = useState<StudentUser[]>([]);
-  const [results, setResults] = useState<ExamSubmission[]>([]);
-  const [settings, setSettings] = useState<AppSettings>({
-    appsScriptUrl: '',
-    spreadsheetId: '1Wanaraya_CBT_ANBK_Kelas7_2026_2027',
-    spreadsheetName: 'DB_CBT_SMPN1_WANARAYA_2026_2027 (UserLogin & JawabanUjian)',
-    examDurationMinutes: 80,
-    examToken: 'WNRY26',
-    teacherName: 'Suwarto',
-    schoolYear: '2026/2027',
-    schoolName: 'SMP Negeri 1 Wanaraya',
-  });
+  // State Database & Koneksi Google Spreadsheet (Inisialisasi dari localStorage agar persisten di Vercel)
+  const [users, setUsers] = useState<StudentUser[]>(() => getLocalUsers());
+  const [results, setResults] = useState<ExamSubmission[]>(() => getLocalResults());
+  const [settings, setSettings] = useState<AppSettings>(() => getLocalSettings());
 
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>({
     connected: true,
@@ -59,62 +60,36 @@ export default function App() {
     message: 'Terhubung ke Database · Sheet UserLogin & JawabanUjian Siap',
     lastSync: new Date().toLocaleTimeString('id-ID'),
     latencyMs: 12,
-    totalUsers: 10,
-    totalResults: 2,
-    appsScriptUrlConfigured: false,
+    totalUsers: 1,
+    totalResults: 1,
+    appsScriptUrlConfigured: Boolean(getLocalSettings().appsScriptUrl),
   });
 
   // State Form Cepat di Beranda: Sambungkan Data Siswa (Kode, Nama Peserta, Kelas, Token) ke Spreadsheet
-  const [quickKode, setQuickKode] = useState('7A-007');
+  const [quickKode, setQuickKode] = useState('7A-002');
   const [quickNama, setQuickNama] = useState('');
   const [quickKelas, setQuickKelas] = useState<KelasOption>('7A');
-  const [quickToken, setQuickToken] = useState('WNRY26');
+  const [quickToken, setQuickToken] = useState(() => getLocalSettings().examToken || 'WNRY26');
   const [quickSaveFeedback, setQuickSaveFeedback] = useState<string | null>(null);
   const [isQuickSaving, setIsQuickSaving] = useState(false);
 
-  // Fungsi Tarik Status, Users, dan Results dari Server
+  // Fungsi Tarik Status, Users, dan Results (Berjalan di Vercel & Server)
   const fetchAllData = useCallback(async () => {
-    try {
-      const [statusRes, usersRes, resultsRes] = await Promise.all([
-        fetch('/api/status'),
-        fetch('/api/users'),
-        fetch('/api/results'),
-      ]);
+    const localSet = getLocalSettings();
+    setSettings(localSet);
+    setQuickToken(localSet.examToken || 'WNRY26');
 
-      if (statusRes.ok) {
-        const sData = await statusRes.json();
-        setConnectionStatus({
-          connected: Boolean(sData.connected),
-          mode: sData.mode || 'server_database_ready',
-          message: sData.message || 'Database Terhubung',
-          lastSync: sData.lastSync || new Date().toLocaleTimeString('id-ID'),
-          latencyMs: Number(sData.latencyMs || 10),
-          totalUsers: Number(sData.totalUsers || 0),
-          totalResults: Number(sData.totalResults || 0),
-          appsScriptUrlConfigured: Boolean(sData.appsScriptUrlConfigured),
-        });
-        if (sData.settings) {
-          setSettings(sData.settings);
-          setQuickToken(sData.settings.examToken || 'WNRY26');
-        }
-      }
+    const status = await checkConnectionAndSyncData(localSet);
+    setConnectionStatus(status);
 
-      if (usersRes.ok) {
-        const uData = await usersRes.json();
-        if (Array.isArray(uData.users)) {
-          setUsers(uData.users);
-        }
-      }
-
-      if (resultsRes.ok) {
-        const rData = await resultsRes.json();
-        if (Array.isArray(rData.results)) {
-          setResults(rData.results);
-        }
-      }
-    } catch (err) {
-      console.error('Error fetching initial data:', err);
+    // Jika URL Apps Script sudah terpasang, tarik daftar siswa terbaru dari Spreadsheet
+    if (localSet.appsScriptUrl && localSet.appsScriptUrl.startsWith('https://script.google.com')) {
+      const pullRes = await pullUsersFromSpreadsheetHybrid();
+      setUsers(pullRes.users);
+    } else {
+      setUsers(getLocalUsers());
     }
+    setResults(getLocalResults());
   }, []);
 
   useEffect(() => {
@@ -123,22 +98,11 @@ export default function App() {
 
   // Handler Tambah / Simpan Data Siswa ke Spreadsheet (Kode, Nama Peserta, Kelas, Token)
   const handleAddStudentToSheet = async (student: Partial<StudentUser>) => {
-    try {
-      const resp = await fetch('/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(student),
-      });
-      const data = await resp.json();
-      if (data.ok && Array.isArray(data.users)) {
-        setUsers(data.users);
-        await fetchAllData();
-        return { ok: true, message: data.message, student: data.student };
-      }
-      return { ok: false, message: data.message || 'Gagal menyimpan data siswa.' };
-    } catch {
-      return { ok: false, message: 'Gagal menghubungi server database.' };
-    }
+    const res = await addStudentToSheetHybrid(student);
+    setUsers(res.users);
+    const status = await checkConnectionAndSyncData();
+    setConnectionStatus(status);
+    return { ok: res.ok, message: res.message, student: res.student };
   };
 
   // Handler Form Cepat di Home (Sambungkan Kode, Nama Peserta, Kelas, Token ke Spreadsheet)
@@ -159,7 +123,7 @@ export default function App() {
       setQuickSaveFeedback(res.message);
       if (res.ok) {
         setQuickNama('');
-        const nextIdx = users.filter((u) => u.kelas === quickKelas).length + 2;
+        const nextIdx = getLocalUsers().filter((u) => u.kelas === quickKelas).length + 1;
         setQuickKode(`${quickKelas}-${String(nextIdx).padStart(3, '0')}`);
       }
     } finally {
@@ -169,65 +133,39 @@ export default function App() {
 
   // Handler "Tarik dari Spreadsheet"
   const handlePullFromSpreadsheet = async () => {
-    try {
-      const resp = await fetch('/api/users/pull-spreadsheet', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ appsScriptUrl: settings.appsScriptUrl }),
-      });
-      const data = await resp.json();
-      if (data.ok && Array.isArray(data.users)) {
-        setUsers(data.users);
-        await fetchAllData();
-        return { ok: true, message: data.message };
-      }
-      return { ok: false, message: data.message || 'Gagal menarik data spreadsheet.' };
-    } catch {
-      return { ok: false, message: 'Gagal melakukan sinkronisasi dengan spreadsheet.' };
-    }
+    const res = await pullUsersFromSpreadsheetHybrid();
+    setUsers(res.users);
+    const status = await checkConnectionAndSyncData();
+    setConnectionStatus(status);
+    return { ok: res.ok, message: res.message };
   };
 
   // Handler Submit Hasil Ujian ke Sheet JawabanUjian
   const handleSubmitExamResult = async (submission: Omit<ExamSubmission, 'id'>) => {
-    try {
-      const resp = await fetch('/api/results', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(submission),
-      });
-      const data = await resp.json();
-      await fetchAllData();
-      return {
-        ok: Boolean(data.ok),
-        message: data.message || 'Hasil ujian tersimpan di sheet JawabanUjian.',
-        result: data.result,
-      };
-    } catch {
-      return {
-        ok: true,
-        message: 'Hasil ujian tersimpan secara lokal.',
-      };
-    }
+    const res = await submitExamResultHybrid(submission);
+    setResults(res.results);
+    const status = await checkConnectionAndSyncData();
+    setConnectionStatus(status);
+    return {
+      ok: res.ok,
+      message: res.message,
+      result: res.result,
+    };
   };
 
-  // Handler Update Pengaturan
+  // Handler Update Pengaturan (Bebas Error di Vercel & Langsung Sinkronisasi)
   const handleUpdateSettings = async (newSettings: Partial<AppSettings>) => {
-    try {
-      const resp = await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newSettings),
-      });
-      const data = await resp.json();
-      if (data.ok && data.settings) {
-        setSettings(data.settings);
-        await fetchAllData();
-        return { ok: true, message: data.message };
-      }
-      return { ok: false, message: 'Gagal menyimpan pengaturan.' };
-    } catch {
-      return { ok: false, message: 'Terjadi kesalahan saat menyimpan pengaturan.' };
+    const res = await saveAppSettingsHybrid(newSettings);
+    setSettings(res.settings);
+    setQuickToken(res.settings.examToken || 'WNRY26');
+    setConnectionStatus(res.connectionStatus);
+
+    if (res.settings.appsScriptUrl && res.settings.appsScriptUrl.startsWith('https://script.google.com')) {
+      const pulled = await pullUsersFromSpreadsheetHybrid();
+      setUsers(pulled.users);
     }
+
+    return { ok: res.ok, message: res.message };
   };
 
   return (

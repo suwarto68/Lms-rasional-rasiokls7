@@ -136,13 +136,63 @@ export const CbtQuizView: React.FC<CbtQuizViewProps> = ({
     setLoginError('');
   };
 
-  // Handler Login Siswa
+  // Handler Login Siswa (Kompatibel Penuh di Vercel & Server)
   const handleStudentLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
     setIsLoggingIn(true);
 
     try {
+      const cleanUser = usernameInput.trim().toLowerCase();
+      const cleanPass = passwordInput.trim();
+      const cleanToken = tokenInput.trim().toUpperCase();
+
+      // 1. Cari pada daftar siswa yang sudah disinkronkan dari sheet UserLogin
+      let matched = users.find(
+        (u) =>
+          (u.username.toLowerCase() === cleanUser ||
+            u.kode.toLowerCase() === cleanUser ||
+            u.nama.toLowerCase() === cleanUser) &&
+          u.kelas === selectedKelas
+      );
+
+      // 2. Jika belum ditemukan di memori lokal, coba segarkan dari Google Spreadsheet terlebih dahulu
+      if (!matched) {
+        await onRefreshUsers();
+      }
+
+      matched = users.find(
+        (u) =>
+          (u.username.toLowerCase() === cleanUser ||
+            u.kode.toLowerCase() === cleanUser ||
+            u.nama.toLowerCase() === cleanUser) &&
+          u.kelas === selectedKelas
+      );
+
+      if (matched) {
+        if (matched.password !== cleanPass) {
+          setLoginError('Password yang Anda masukkan tidak sesuai dengan data pada sheet UserLogin.');
+          return;
+        }
+        if (
+          cleanToken &&
+          cleanToken !== (matched.token || '').toUpperCase() &&
+          cleanToken !== (activeToken || 'WNRY26').toUpperCase()
+        ) {
+          setLoginError(`Token ujian "${tokenInput}" tidak valid. Gunakan Token Aktif: ${activeToken}`);
+          return;
+        }
+
+        setLoggedInStudent(matched);
+        setCurrentIndex(0);
+        setAnswers({});
+        setDoubtfulMap({});
+        setSubmittedResult(null);
+        setTimeLeftSeconds((examDurationMinutes || 80) * 60);
+        return;
+      }
+
+      // 3. Fallback ke endpoint /api/auth/login jika berjalan di server Node
       const resp = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -153,39 +203,31 @@ export const CbtQuizView: React.FC<CbtQuizViewProps> = ({
           token: tokenInput,
         }),
       });
-      const data = await resp.json();
-      if (!resp.ok || !data.ok) {
+      const contentType = resp.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const data = await resp.json();
+        if (resp.ok && data.ok && data.student) {
+          setLoggedInStudent(data.student);
+          setCurrentIndex(0);
+          setAnswers({});
+          setDoubtfulMap({});
+          setSubmittedResult(null);
+          setTimeLeftSeconds((data.examConfig?.durationMinutes || examDurationMinutes || 80) * 60);
+          return;
+        }
         setLoginError(
           data.message ||
-            'Login gagal! Periksa kembali Username, Password, dan pilihan Kelas [7A / 7B] pada sheet UserLogin.'
+            `Data peserta "${usernameInput}" tidak ditemukan pada Kelas ${selectedKelas} di sheet UserLogin.`
         );
       } else {
-        setLoggedInStudent(data.student);
-        setCurrentIndex(0);
-        setAnswers({});
-        setDoubtfulMap({});
-        setSubmittedResult(null);
-        setTimeLeftSeconds((data.examConfig?.durationMinutes || examDurationMinutes || 80) * 60);
+        setLoginError(
+          `Data peserta "${usernameInput}" tidak ditemukan pada Kelas ${selectedKelas} di sheet UserLogin. Silakan klik "Segarkan Sheet UserLogin" atau daftarkan peserta di tab sebelah.`
+        );
       }
     } catch {
-      // Fallback pencocokan lokal jika offline
-      const matched = users.find(
-        (u) =>
-          (u.username.toLowerCase() === usernameInput.trim().toLowerCase() ||
-            u.kode.toLowerCase() === usernameInput.trim().toLowerCase()) &&
-          u.password === passwordInput.trim() &&
-          u.kelas === selectedKelas
+      setLoginError(
+        `Data peserta "${usernameInput}" tidak ditemukan pada Kelas ${selectedKelas} di sheet UserLogin.`
       );
-      if (matched) {
-        setLoggedInStudent(matched);
-        setCurrentIndex(0);
-        setAnswers({});
-        setDoubtfulMap({});
-        setSubmittedResult(null);
-        setTimeLeftSeconds(examDurationMinutes * 60);
-      } else {
-        setLoginError('Username, Password, atau Kelas tidak sesuai dengan data pada sheet UserLogin.');
-      }
     } finally {
       setIsLoggingIn(false);
     }

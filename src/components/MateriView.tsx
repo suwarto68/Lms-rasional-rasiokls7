@@ -77,10 +77,12 @@ export const MateriView: React.FC<MateriViewProps> = ({ onNavigate }) => {
   const diffLeft = leftCokelat - leftSusu;
   const diffRight = rightCokelat - rightSusu;
 
-  // Handler Generate Poster Infografis Baru
+  // Handler Generate Poster Infografis Baru (Mendukung Server & Vercel Static Fallback)
   const handleGeneratePoster = async () => {
     const topicToUse = customTopic.trim() || selectedPresetTopic;
     setIsGeneratingPoster(true);
+    const assignedImage = selectedBabGen.includes('Bab 2') ? imgInfografisRasional : imgInfografisRasio;
+
     try {
       const resp = await fetch('/api/infographic/generate', {
         method: 'POST',
@@ -90,18 +92,66 @@ export const MateriView: React.FC<MateriViewProps> = ({ onNavigate }) => {
           bab: selectedBabGen,
         }),
       });
-      const data = await resp.json();
-      if (data.ok && data.poster) {
-        const assignedImage = selectedBabGen.includes('Bab 2') ? imgInfografisRasional : imgInfografisRasio;
-        const newPoster: InfographicPosterData = {
-          ...data.poster,
-          imageUrl: assignedImage,
-        };
-        setPosters((prev) => [newPoster, ...prev]);
-        setCustomTopic('');
+      const contentType = resp.headers.get('content-type') || '';
+      if (resp.ok && contentType.includes('application/json')) {
+        const data = await resp.json();
+        if (data.ok && data.poster) {
+          const newPoster: InfographicPosterData = {
+            ...data.poster,
+            imageUrl: assignedImage,
+          };
+          setPosters((prev) => [newPoster, ...prev]);
+          setCustomTopic('');
+          return;
+        }
       }
-    } catch (err) {
-      console.error('Error generating infographic:', err);
+      throw new Error('Fallback client generator');
+    } catch {
+      // Fallback generator terstruktur di sisi klien (100% berjalan di Vercel)
+      const fallbackPoster: InfographicPosterData = {
+        id: `poster-gen-${Date.now()}`,
+        title: `Infografis Materi: ${topicToUse}`,
+        subtitle: `${selectedBabGen} · SMP Negeri 1 Wanaraya T.A. 2026/2027 (Pengampu: Suwarto)`,
+        bab: selectedBabGen,
+        imageUrl: assignedImage,
+        keyFormulas: [
+          {
+            label: 'Konversi Pecahan & Desimal Ekuivalen',
+            formula: 'a/b ± c,d = a/b ± (cd/10)  atau  (a÷b) ± c,d',
+            note: 'Samakan bentuk ke pecahan seluruhnya (Siswa A) atau ke desimal seluruhnya (Siswa B).',
+          },
+          {
+            label: 'Perkalian & Pembagian Rasional',
+            formula: '(a/b) × (c/d) = ac/bd   |   (a/b) : (c/d) = (a/b) × (d/c)',
+            note: 'Gunakan kebalikan (resiprokal) pembagi pada operasi pembagian pecahan.',
+          },
+          {
+            label: 'Rasio & Proporsi Skala',
+            formula: 'a : b = (a × k) : (b × k)',
+            note: 'Rasio menyatakan perbandingan perkalian/pembagian, bukan selisih pengurangan.',
+          },
+        ],
+        steps: [
+          {
+            number: '01',
+            heading: 'Identifikasi Bentuk & Satuan Besaran',
+            detail: 'Periksa apakah bilangan disajikan dalam pecahan, desimal, atau persen, serta pastikan satuan kedua besaran sudah disamakan.',
+          },
+          {
+            number: '02',
+            heading: 'Sederhanakan dengan FPB atau Konversi Ekuivalen',
+            detail: 'Bagi kedua suku rasio atau pembilang-penyebut pecahan dengan Faktor Persekutuan Terbesar (FPB).',
+          },
+          {
+            number: '03',
+            heading: 'Verifikasi pada Permasalahan Kontekstual',
+            detail: 'Periksa kembali apakah hasil perhitungan logis terhadap permasalahan takaran bahan, skala gambar, atau potongan diskon.',
+          },
+        ],
+        kalselContext: `Penerapan Kontekstual Kalimantan Selatan (${topicToUse}): Perhitungan hasil panen padi rawa pasang surut Kecamatan Wanaraya, takaran resep kue tradisional Banjar, dan perbandingan muatan jukung di Pasar Terapung.`,
+      };
+      setPosters((prev) => [fallbackPoster, ...prev]);
+      setCustomTopic('');
     } finally {
       setIsGeneratingPoster(false);
     }

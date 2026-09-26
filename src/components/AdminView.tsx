@@ -72,8 +72,17 @@ export const AdminView: React.FC<AdminViewProps> = ({
   const [durationInput, setDurationInput] = useState(settings.examDurationMinutes || 80);
   const [tokenSettingInput, setTokenSettingInput] = useState(settings.examToken || 'WNRY26');
   const [settingsSavedMsg, setSettingsSavedMsg] = useState<string | null>(null);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [copiedCodeTab, setCopiedCodeTab] = useState<string | null>(null);
   const [activeScriptTab, setActiveScriptTab] = useState<'full' | 'nama_kelas' | 'kode_nama_token'>('full');
+
+  React.useEffect(() => {
+    setScriptUrlInput(settings.appsScriptUrl || '');
+    setSheetNameInput(settings.spreadsheetName || '');
+    setDurationInput(settings.examDurationMinutes || 80);
+    setTokenSettingInput(settings.examToken || 'WNRY26');
+    setNewToken(settings.examToken || 'WNRY26');
+  }, [settings]);
 
   // State Menu 4: Akses Pembahasan Berpassword Terprotek (Password: Suwarto)
   const [pembahasanPasswordInput, setPembahasanPasswordInput] = useState('');
@@ -119,17 +128,23 @@ export const AdminView: React.FC<AdminViewProps> = ({
     }
   };
 
-  // Handler Simpan Pengaturan
+  // Handler Simpan Pengaturan (Kompatibel Penuh dengan Vercel & Google Apps Script)
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await onUpdateSettings({
-      appsScriptUrl: scriptUrlInput,
-      spreadsheetName: sheetNameInput,
-      examDurationMinutes: Number(durationInput),
-      examToken: tokenSettingInput,
-    });
-    setSettingsSavedMsg(res.message);
-    setTimeout(() => setSettingsSavedMsg(null), 4000);
+    setIsSavingSettings(true);
+    setSettingsSavedMsg(null);
+    try {
+      const res = await onUpdateSettings({
+        appsScriptUrl: scriptUrlInput.trim(),
+        spreadsheetName: sheetNameInput.trim(),
+        examDurationMinutes: Number(durationInput) || 80,
+        examToken: tokenSettingInput.trim().toUpperCase() || 'WNRY26',
+      });
+      setSettingsSavedMsg(res.message);
+      setTimeout(() => setSettingsSavedMsg(null), 6000);
+    } finally {
+      setIsSavingSettings(false);
+    }
   };
 
   // Handler Copy Kode Apps Script
@@ -636,9 +651,10 @@ export const AdminView: React.FC<AdminViewProps> = ({
               <div className="md:col-span-4 flex items-end">
                 <button
                   type="submit"
-                  className="w-full py-2.5 px-5 bg-[#0284C7] hover:bg-[#0369A1] text-white font-bold text-sm rounded-xl transition-colors cursor-pointer"
+                  disabled={isSavingSettings}
+                  className="w-full py-2.5 px-5 bg-[#0284C7] hover:bg-[#0369A1] disabled:bg-sky-400 text-white font-bold text-sm rounded-xl transition-colors cursor-pointer"
                 >
-                  Simpan Pengaturan & Sinkronkan
+                  {isSavingSettings ? 'Menyimpan & Menghubungkan...' : 'Simpan Pengaturan & Sinkronkan'}
                 </button>
               </div>
             </form>
